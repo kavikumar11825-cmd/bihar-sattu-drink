@@ -1,10 +1,9 @@
 {
-  "projectId": "woven-smoke-32gpt",
-  "appId": "1:540341709496:web:a4a3e4893fbcb512c5e24d",
-  "apiKey": "AIzaSyA6Mr1QLP-EwIsogKnjDBua5EnmJ6yzS0k",
-  "authDomain": "woven-smoke-32gpt.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-biharsattudrink-693adab6-018c-4be5-8fe2-7b306a0c52ea",
-  "storageBucket": "woven-smoke-32gpt.firebasestorage.app",
-  "messagingSenderId": "540341709496",
-  "measurementId": ""
+  "projectId": "bihar-sattu-drink",
+  "appId": "1:41685630560:web:b21d00d25da3ae44128d05",
+  "apiKey": "AIzaSyCdNv_3zxSaHRwxV8hphJojiOozcP0aV2g",
+  "authDomain": "bihar-sattu-drink.firebaseapp.com",
+  "storageBucket": "bihar-sattu-drink.firebasestorage.app",
+  "messagingSenderId": "41685630560",
+  "measurementId": "G-SYEEQZMH3B"
 }

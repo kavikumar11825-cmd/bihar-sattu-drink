@@ -22,7 +22,7 @@ import { SattuCustomizerOptions } from "./types";
 const app = initializeApp(firebaseConfig);
 
 // Initialize Firestore targeting the specific databaseId
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || "(default)");
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId || "(default)");
 
 // Initialize Auth
 export const auth = getAuth(app);
