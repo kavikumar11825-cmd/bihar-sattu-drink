@@ -1,0 +1,8 @@
+{
+  "name": "Bihar Sattu Drink",
+  "description": "An interactive, elegant platform celebrating the legendary nutritional energy drink of Bihar, complete with a dynamic recipe customizer, live nutrition calculator, and a friendly AI Sattu health coach.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
