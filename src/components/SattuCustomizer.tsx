@@ -18,9 +18,10 @@ interface SattuCustomizerProps {
   options: SattuCustomizerOptions;
   onChange: (updated: SattuCustomizerOptions) => void;
   onReset: () => void;
+  onOrder?: (mode: "regular" | "bulk") => void;
 }
 
-export default function SattuCustomizer({ options, onChange, onReset }: SattuCustomizerProps) {
+export default function SattuCustomizer({ options, onChange, onReset, onOrder }: SattuCustomizerProps) {
   const nutrition = calculateNutrition(options);
 
   const updateOption = <K extends keyof SattuCustomizerOptions>(
@@ -576,6 +577,22 @@ export default function SattuCustomizer({ options, onChange, onReset }: SattuCus
               <span className="font-mono font-semibold text-stone-100">{nutrition.sodium} mg</span>
             </div>
           </div>
+        </div>
+
+        {/* Ordering Action Buttons */}
+        <div className="mt-6 grid grid-cols-2 gap-3 relative z-10">
+          <button
+            onClick={() => onOrder?.("regular")}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-2 rounded-2xl text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md active:scale-95"
+          >
+            🥤 Order Now (₹30)
+          </button>
+          <button
+            onClick={() => onOrder?.("bulk")}
+            className="bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold py-3 px-2 rounded-2xl text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md active:scale-95"
+          >
+            ⭐ Bulk Catering
+          </button>
         </div>
 
         {/* Dynamic superfood stamp */}

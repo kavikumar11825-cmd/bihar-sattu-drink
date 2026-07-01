@@ -1,11 +1,19 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { SattuCustomizerOptions } from "./types";
 import SattuCustomizer from "./components/SattuCustomizer";
 import SattuAICoach from "./components/SattuAICoach";
 import BenefitsBento from "./components/BenefitsBento";
 import TraditionalRecipesList from "./components/TraditionalRecipesList";
+import BiharCuisineHub from "./components/BiharCuisineHub";
 import SattuStallFinder from "./components/SattuStallFinder";
 import FeedbackReviewsList from "./components/FeedbackReviewsList";
+
+// Firebase and checkout overlays
+import SattuAuthModal from "./components/SattuAuthModal";
+import SattuCheckoutModal from "./components/SattuCheckoutModal";
+import SattuOrdersDashboard from "./components/SattuOrdersDashboard";
+import SattuAdminPanel from "./components/SattuAdminPanel";
+import { getLocalUser, setLocalUser, SattuUser } from "./firebase";
 
 import { 
   Sparkles, 
@@ -19,7 +27,10 @@ import {
   MapPin,
   Compass,
   Utensils,
-  BookOpen
+  BookOpen,
+  UserCheck,
+  Lock,
+  LineChart
 } from "lucide-react";
 import { motion } from "motion/react";
 
@@ -40,6 +51,41 @@ const INITIAL_OPTIONS: SattuCustomizerOptions = {
 
 export default function App() {
   const [options, setOptions] = useState<SattuCustomizerOptions>(INITIAL_OPTIONS);
+  
+  // Firebase Auth and Checkout States
+  const [user, setUser] = useState<SattuUser | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
+  const [checkoutMode, setCheckoutMode] = useState<"regular" | "bulk">("regular");
+  const [adminOpen, setAdminOpen] = useState(false);
+
+  useEffect(() => {
+    // Sync session on mount
+    const savedUser = getLocalUser();
+    setUser(savedUser);
+  }, []);
+
+  const handleLogout = () => {
+    setLocalUser(null);
+    setUser(null);
+  };
+
+  const handleOrderTrigger = (mode: "regular" | "bulk") => {
+    setCheckoutMode(mode);
+    if (!user) {
+      setAuthModalOpen(true);
+    } else {
+      setCheckoutModalOpen(true);
+    }
+  };
+
+  const handleLoginSuccess = (loggedInUser: SattuUser) => {
+    setUser(loggedInUser);
+    // Smooth scroll to customizer orders view
+    setTimeout(() => {
+      setCheckoutModalOpen(true);
+    }, 400);
+  };
 
   const handleSelectRecipe = (presetOptions: SattuCustomizerOptions) => {
     setOptions(presetOptions);
@@ -74,7 +120,7 @@ export default function App() {
       <nav className="sticky top-0 z-50 bg-stone-50/80 backdrop-blur-md border-b border-stone-200/60 px-4 py-3 md:px-8">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center text-white shadow-sm">
+            <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center text-white shadow-sm font-serif">
               <span className="text-xl font-bold">स</span>
             </div>
             <div>
@@ -84,9 +130,11 @@ export default function App() {
           </div>
 
           {/* Quick Nav Anchors */}
-          <div className="hidden md:flex items-center gap-6 text-xs font-semibold text-stone-600">
+          <div className="hidden lg:flex items-center gap-6 text-xs font-semibold text-stone-600">
             <a href="#recipes" className="hover:text-amber-600 transition-colors">Recipes</a>
+            <a href="#cuisine-hub" className="text-emerald-700 hover:text-emerald-800 transition-colors font-bold">Bihar Cuisine</a>
             <a href="#interactive-customizer" className="hover:text-amber-600 transition-colors">Customizer</a>
+            {user && <a href="#orders" className="text-emerald-700 hover:text-emerald-800 transition-colors font-bold">My Orders</a>}
             <a href="#benefits" className="hover:text-amber-600 transition-colors">Health Benefits</a>
             <a href="#ai-coach" className="hover:text-amber-600 transition-colors">AI Coach</a>
             <a href="#stalls" className="hover:text-amber-600 transition-colors">Stall Finder</a>
@@ -94,9 +142,39 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-1 rounded-full font-bold">
-              ● Online
+            <span className="hidden sm:inline-block text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-full font-bold">
+              ● Live Kitchen
             </span>
+
+            {/* Profile Avatar / Login trigger */}
+            {user ? (
+              <div className="flex items-center gap-2">
+                {user.role === "admin" && (
+                  <button
+                    onClick={() => setAdminOpen(true)}
+                    className="bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-bold px-2.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1 hover:bg-amber-200"
+                    title="Control Panel"
+                  >
+                    <Lock className="w-3 h-3 text-amber-600" />
+                    Admin
+                  </button>
+                )}
+                <a 
+                  href="#orders"
+                  className="bg-stone-100 hover:bg-stone-200 border border-stone-200 text-stone-850 text-[10px] font-bold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5"
+                >
+                  <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Hi, {user.name.split(" ")[0]}</span>
+                </a>
+              </div>
+            ) : (
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-4 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+              >
+                Sign In
+              </button>
+            )}
           </div>
         </div>
       </nav>
@@ -269,10 +347,51 @@ export default function App() {
         </div>
       </section>
 
+      {/* 3.5 BIHAR TRADITIONAL SWEETS & CUISINE ENCYCLOPEDIA */}
+      <section id="cuisine-hub" className="py-16 px-4 md:px-8 border-t border-stone-200/50 bg-stone-100/10">
+        <div className="max-w-7xl mx-auto">
+          <BiharCuisineHub />
+        </div>
+      </section>
+
       {/* 4. MAIN INTERACTIVE CUSTOMIZER SECTION */}
       <section id="interactive-customizer" className="py-16 px-4 md:px-8 bg-stone-100/30 border-t border-stone-200/50">
         <div className="max-w-7xl mx-auto">
-          <SattuCustomizer options={options} onChange={setOptions} onReset={handleReset} />
+          <SattuCustomizer 
+            options={options} 
+            onChange={setOptions} 
+            onReset={handleReset} 
+            onOrder={handleOrderTrigger}
+          />
+        </div>
+      </section>
+
+      {/* 4.5 REAL-TIME TRACKING & ORDERS PANEL */}
+      <section id="orders" className="py-16 px-4 md:px-8 bg-amber-50/10 border-t border-stone-200/40">
+        <div className="max-w-7xl mx-auto">
+          {user ? (
+            <SattuOrdersDashboard 
+              user={user} 
+              onLogout={handleLogout} 
+              onOpenAdminPanel={() => setAdminOpen(true)}
+            />
+          ) : (
+            <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-stone-200/80 text-center space-y-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 flex items-center justify-center text-amber-600 mx-auto">
+                <LineChart className="w-6 h-6" />
+              </div>
+              <h4 className="text-lg font-extrabold text-stone-900 tracking-tight">📊 Track Live Sattu Orders / लाइव ऑर्डर ट्रैकिंग</h4>
+              <p className="text-stone-500 text-xs max-w-lg mx-auto leading-relaxed">
+                Our fresh Sattu beverages are hand-blended and delivered in traditional earthen Kullhads. Log in with your mobile number to customize recipes, place bulk event orders, and track your drink's live preparation status!
+              </p>
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-md inline-flex items-center gap-2"
+              >
+                Sign In to Start Ordering
+              </button>
+            </div>
+          )}
         </div>
       </section>
 
@@ -374,6 +493,7 @@ export default function App() {
             <h5 className="text-white text-xs font-bold uppercase tracking-wider mb-4">Quick Navigation</h5>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <a href="#recipes" className="hover:text-amber-400 transition-colors">Traditional Recipes</a>
+              <a href="#cuisine-hub" className="hover:text-amber-400 transition-colors font-bold">Bihari Cuisine Hub</a>
               <a href="#interactive-customizer" className="hover:text-amber-400 transition-colors">Sattu Customizer</a>
               <a href="#benefits" className="hover:text-amber-400 transition-colors">Health Benefits</a>
               <a href="#ai-coach" className="hover:text-amber-400 transition-colors">Sattu AI Coach</a>
@@ -403,6 +523,35 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Interactive Overlays & Modals */}
+      <SattuAuthModal 
+        isOpen={authModalOpen} 
+        onClose={() => setAuthModalOpen(false)} 
+        onLoginSuccess={handleLoginSuccess} 
+      />
+
+      {user && (
+        <SattuCheckoutModal 
+          isOpen={checkoutModalOpen} 
+          onClose={() => setCheckoutModalOpen(false)} 
+          user={user} 
+          customization={options} 
+          mode={checkoutMode} 
+          onOrderCompleted={() => {
+            // Smooth scroll to the live tracker
+            const trackerEl = document.getElementById("orders");
+            if (trackerEl) {
+              trackerEl.scrollIntoView({ behavior: "smooth" });
+            }
+          }}
+        />
+      )}
+
+      <SattuAdminPanel 
+        isOpen={adminOpen} 
+        onClose={() => setAdminOpen(false)} 
+      />
 
     </div>
   );
