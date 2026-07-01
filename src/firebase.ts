@@ -15,18 +15,8 @@ import {
   serverTimestamp
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
+import firebaseConfig from "../firebase-applet-config.json";
 import { SattuCustomizerOptions } from "./types";
-
-// Firebase Config
-const firebaseConfig = {
-  projectId: "woven-smoke-32gpt",
-  appId: "1:540341709496:web:a4a3e4893fbcb512c5e24d",
-  apiKey: "AIzaSyA6Mr1QLP-EwIsogKnjDBua5EnmJ6yzS0k",
-  authDomain: "woven-smoke-32gpt.firebaseapp.com",
-  firestoreDatabaseId: "ai-studio-biharsattudrink-693adab6-018c-4be5-8fe2-7b306a0c52ea",
-  storageBucket: "woven-smoke-32gpt.firebasestorage.app",
-  messagingSenderId: "540341709496",
-};
 
 // Initialize App
 const app = initializeApp(firebaseConfig);

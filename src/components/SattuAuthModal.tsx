@@ -1,9 +1,15 @@
 import { useState, FormEvent } from "react";
-import { authenticateSattuUser, SattuUser, auth } from "../firebase";
-import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth";
-import { X, Mail, Phone, User, Check, Key, Sparkles, LogIn, AlertCircle, MapPin, Smartphone, RefreshCw } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
-import { triggerSimulatedOtp } from "./OtpNotificationSimulator";
+import { authenticateSattuUser, SattuUser, auth, db, setLocalUser } from "../firebase";
+import { 
+  RecaptchaVerifier, 
+  signInWithPhoneNumber, 
+  ConfirmationResult,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
+} from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { X, Mail, Phone, User, Check, Sparkles, LogIn, AlertCircle, MapPin, Smartphone, RefreshCw, Lock, UserPlus } from "lucide-react";
+import { motion } from "motion/react";
 
 interface SattuAuthModalProps {
   isOpen: boolean;
@@ -12,46 +18,28 @@ interface SattuAuthModalProps {
 }
 
 export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: SattuAuthModalProps) {
+  const [authMethod, setAuthMethod] = useState<"phone" | "email">("phone");
+  const [emailMode, setEmailMode] = useState<"signin" | "signup">("signin");
+  
+  // Fields
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState(""); // Strictly mandatory address
+  const [password, setPassword] = useState("");
+  
+  // OTP verification states
   const [otpMode, setOtpMode] = useState(false);
   const [otpCode, setOtpCode] = useState("");
-  const [activeOtp, setActiveOtp] = useState(""); // Dynamically generated OTP for verification
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
-  const [otpChannel] = useState<"email">("email");
+  
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
 
-  const generateAndSendOtp = async () => {
-    // Generate a secure, truly dynamic 6-digit OTP code
-    const generated = Math.floor(100000 + Math.random() * 900000).toString();
-    setActiveOtp(generated);
-    setConfirmationResult(null);
-
-    // Call server-side real dispatch proxy route to send strictly to user's provided email inbox
-    try {
-      const response = await fetch("/api/send-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "email", target: email.trim().toLowerCase(), code: generated })
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to send OTP.");
-      }
-    } catch (e: any) {
-      console.error("Real OTP dispatch failed:", e);
-      setError(e.message || "ईमेल भेजने में त्रुटि! / Error sending OTP email. Ensure your SMTP configuration in settings is correct.");
-      throw e;
-    }
-  };
-
-  const handleSendOtp = (e: FormEvent) => {
+  // Handle Firebase Phone Authentication
+  const handleSendPhoneOtp = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
 
@@ -73,80 +61,189 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
     }
 
     setLoading(true);
-    setTimeout(() => {
-      generateAndSendOtp()
-        .then(() => {
-          setOtpMode(true);
-        })
-        .catch(() => {
-          // Keep on the same screen so they can read the error message
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    }, 700);
-  };
-
-  const handleVerifyOtp = async (e: FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
 
     try {
-      let uid: string | undefined = undefined;
-
-      if (confirmationResult) {
-        try {
-          console.log("Verifying real OTP with Firebase Phone Auth:", otpCode);
-          const userCredential = await confirmationResult.confirm(otpCode);
-          uid = userCredential.user.uid;
-          console.log("Firebase Phone Auth verified successfully! uid:", uid);
-        } catch (err: any) {
-          console.error("Firebase Auth OTP verification failed:", err);
-          setError("अवैध ओटीपी कोड! / Invalid Firebase OTP code. Please check the code sent to your mobile or try again.");
-          setLoading(false);
-          return;
-        }
-      } else {
-        // Fallback or Email verification
-        if (otpCode !== activeOtp) {
-          setError("गलत ओटीपी! कृपया सही ओटीपी दर्ज करें जो आपको प्राप्त हुआ है। / Incorrect OTP. Please enter the dynamic code displayed in the alert notification.");
-          setLoading(false);
-          return;
-        }
+      // Find or create RecaptchaVerifier
+      let recaptchaVerifier = (window as any).recaptchaVerifier;
+      if (!recaptchaVerifier) {
+        recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", {
+          size: "invisible",
+          callback: () => {
+            console.log("reCAPTCHA solved, proceeding with Phone OTP");
+          }
+        });
+        (window as any).recaptchaVerifier = recaptchaVerifier;
       }
 
-      const user = await authenticateSattuUser(email, phone, name, address, uid);
-      onLoginSuccess(user);
-      onClose();
-      // Reset form
-      setName("");
-      setEmail("");
-      setPhone("");
-      setAddress("");
-      setOtpMode(false);
-      setOtpCode("");
-      setConfirmationResult(null);
+      let formattedPhone = phone.trim();
+      if (!formattedPhone.startsWith("+")) {
+        // Default to India country code +91
+        formattedPhone = "+91" + formattedPhone;
+      }
+
+      console.log("Initiating Firebase Phone Auth for:", formattedPhone);
+      const result = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifier);
+      setConfirmationResult(result);
+      setOtpMode(true);
     } catch (err: any) {
-      setError("सत्यापन विफल रहा। कृपया पुनः प्रयास करें। / Verification failed. Please retry.");
+      console.error("Firebase Phone Auth failed:", err);
+      let errMsg = err.message || "Failed to send SMS OTP.";
+      if (err.code === "auth/captcha-check-failed") {
+        errMsg = "कैप्चा सत्यापन विफल रहा / Captcha verification failed. Please refresh and try again.";
+      } else if (err.code === "auth/invalid-phone-number") {
+        errMsg = "अमान्य फ़ोन नंबर! कृपया सही 10-अंकीय नंबर दर्ज करें। / Invalid phone number format.";
+      } else if (err.code === "auth/too-many-requests") {
+        errMsg = "सुरक्षा कारणों से इस नंबर पर अनुरोध अस्थायी रूप से अवरुद्ध कर दिए गए हैं। / Too many requests. Try again later.";
+      }
+      setError(errMsg);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleResendOtp = () => {
+  // Handle OTP Verification for Phone Auth
+  const handleVerifyPhoneOtp = async (e: FormEvent) => {
+    e.preventDefault();
     setError("");
     setLoading(true);
-    setTimeout(() => {
-      generateAndSendOtp()
-        .then(() => {
-          setOtpCode("");
-        })
-        .catch(() => {})
-        .finally(() => {
-          setLoading(false);
-        });
-    }, 600);
+
+    if (otpCode.length < 6) {
+      setError("कृपया 6-अंकों का ओटीपी दर्ज करें / Please enter a valid 6-digit OTP.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      if (!confirmationResult) {
+        throw new Error("No active confirmation session found.");
+      }
+
+      console.log("Verifying real OTP with Firebase Phone Auth:", otpCode);
+      const userCredential = await confirmationResult.confirm(otpCode);
+      const uid = userCredential.user.uid;
+      console.log("Firebase Phone Auth verified successfully! uid:", uid);
+
+      // Successfully authenticated via Phone. Now register/update in Firestore
+      const user = await authenticateSattuUser(email, phone, name, address, uid);
+      onLoginSuccess(user);
+      onClose();
+
+      // Reset form fields
+      setName("");
+      setEmail("");
+      setPhone("");
+      setAddress("");
+      setOtpCode("");
+      setOtpMode(false);
+      setConfirmationResult(null);
+    } catch (err: any) {
+      console.error("Firebase Auth OTP verification failed:", err);
+      setError("अवैध ओटीपी कोड! कृपया फिर से प्रयास करें। / Invalid OTP code. Please enter the correct code received on your phone.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Firebase Email and Password Authentication
+  const handleEmailAuthSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    const emailTrimmed = email.trim();
+    if (!emailTrimmed || !emailTrimmed.includes("@")) {
+      setError("कृपया सही ईमेल दर्ज करें / Please enter a valid Email.");
+      return;
+    }
+    if (password.length < 6) {
+      setError("पासवर्ड कम से कम 6 अक्षरों का होना चाहिए / Password must be at least 6 characters.");
+      return;
+    }
+
+    if (emailMode === "signup") {
+      if (!name.trim()) {
+        setError("कृपया अपना नाम दर्ज करें / Please enter your name.");
+        return;
+      }
+      if (!phone.trim() || phone.length < 10) {
+        setError("कृपया 10 अंकों का मोबाइल नंबर दर्ज करें / Please enter a valid 10-digit mobile number.");
+        return;
+      }
+      if (!address.trim() || address.trim().length < 8) {
+        setError("कृपया पूरा विवरण पता दर्ज करें (न्यूनतम 8 अक्षर) / Please enter a complete delivery address.");
+        return;
+      }
+    }
+
+    setLoading(true);
+
+    try {
+      if (emailMode === "signin") {
+        // Sign in via Firebase Auth
+        console.log("Signing in with Firebase Email Auth:", emailTrimmed);
+        const userCredential = await signInWithEmailAndPassword(auth, emailTrimmed, password);
+        const fbUser = userCredential.user;
+
+        // Fetch existing user profile from Firestore users collection
+        const userDocRef = doc(db, "users", fbUser.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        
+        let loadedUser: SattuUser;
+        if (userDocSnap.exists()) {
+          loadedUser = userDocSnap.data() as SattuUser;
+          setLocalUser(loadedUser);
+        } else {
+          // Fallback profile if Firestore record didn't exist yet
+          loadedUser = await authenticateSattuUser(
+            emailTrimmed, 
+            phone || "0000000000", 
+            name || fbUser.email?.split("@")[0] || "Lovely Guest", 
+            address || "Delivery Address Required", 
+            fbUser.uid
+          );
+        }
+
+        onLoginSuccess(loadedUser);
+        onClose();
+      } else {
+        // Sign up / Registration via Firebase Auth
+        console.log("Registering user via Firebase Email Auth:", emailTrimmed);
+        const userCredential = await createUserWithEmailAndPassword(auth, emailTrimmed, password);
+        const fbUser = userCredential.user;
+
+        // Write user profile in Firestore
+        const loadedUser = await authenticateSattuUser(
+          emailTrimmed, 
+          phone.trim(), 
+          name.trim(), 
+          address.trim(), 
+          fbUser.uid
+        );
+        onLoginSuccess(loadedUser);
+        onClose();
+      }
+
+      // Reset form
+      setName("");
+      setEmail("");
+      setPhone("");
+      setAddress("");
+      setPassword("");
+    } catch (err: any) {
+      console.error("Firebase Email Auth failed:", err);
+      let errMsg = err.message || "Authentication failed.";
+      if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
+        errMsg = "अमान्य ईमेल या पासवर्ड! / Invalid email or password. Please verify your credentials.";
+      } else if (err.code === "auth/email-already-in-use") {
+        errMsg = "यह ईमेल पहले से पंजीकृत है। कृपया 'लॉगिन' टैब का चयन करें। / This email is already registered. Please login.";
+      } else if (err.code === "auth/weak-password") {
+        errMsg = "पासवर्ड कमजोर है! कृपया कम से कम 6 अक्षरों का उपयोग करें। / Password should be at least 6 characters.";
+      } else if (err.code === "auth/invalid-email") {
+        errMsg = "कृपया एक सही ईमेल आईडी दर्ज करें। / Please enter a valid email address.";
+      }
+      setError(errMsg);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -157,7 +254,7 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
         className="bg-white rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl border border-stone-100 relative overflow-hidden"
       >
-        {/* Visual accents */}
+        {/* Decorative Top Accent */}
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-amber-500 to-emerald-600" />
         
         {/* Close Button */}
@@ -168,56 +265,270 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
           <X className="w-5 h-5" />
         </button>
 
-        <div className="text-center mb-6">
-          <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-600 mx-auto mb-3">
+        {/* Header Title */}
+        <div className="text-center mb-5">
+          <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-600 mx-auto mb-2">
             <Sparkles className="w-6 h-6" />
           </div>
           <h3 className="text-xl font-bold text-stone-900 tracking-tight">
-            {!otpMode ? "Customer Sign-In" : "Verify OTP Code"}
+            {otpMode ? "Verify Phone OTP" : "Join Sattu House"}
           </h3>
-          <p className="text-stone-500 text-xs mt-1">
-            {!otpMode 
-              ? "Join us to order, track, and customize your healthy drink!" 
-              : "ओटीपी सत्यापन (OTP Verification) • Secure Customer Access"}
+          <p className="text-stone-500 text-xs mt-0.5">
+            {otpMode 
+              ? "ओटीपी सत्यापन • Secure Customer Verification" 
+              : "Order and customize your authentic Bihari Sattu Drink!"}
           </p>
         </div>
 
+        {/* Error Notification Alert */}
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs flex items-start gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
-            <span>{error}</span>
+            <span className="font-semibold leading-relaxed">{error}</span>
           </div>
         )}
 
-        {!otpMode ? (
-          <form onSubmit={handleSendOtp} className="space-y-4">
-            {/* Name Input */}
-            <div>
-              <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
-                Your Name / आपका नाम
-              </label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-stone-400">
-                  <User className="w-4 h-4" />
-                </span>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Kavi Kumar"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
-                />
-              </div>
+        {/* Auth Method Selector (Tabs) - Hidden during active OTP verification to maintain focus */}
+        {!otpMode && (
+          <div className="grid grid-cols-2 p-1 bg-stone-100 rounded-xl mb-4 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMethod("phone");
+                setError("");
+              }}
+              className={`py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                authMethod === "phone"
+                  ? "bg-white text-emerald-800 shadow-sm font-bold"
+                  : "text-stone-600 hover:text-stone-900"
+              }`}
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>Mobile OTP</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMethod("email");
+                setError("");
+              }}
+              className={`py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                authMethod === "email"
+                  ? "bg-white text-emerald-800 shadow-sm font-bold"
+                  : "text-stone-600 hover:text-stone-900"
+              }`}
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>Email & Password</span>
+            </button>
+          </div>
+        )}
+
+        {/* TAB 1: PHONE AUTHENTICATION METHOD */}
+        {authMethod === "phone" && (
+          <>
+            {!otpMode ? (
+              <form onSubmit={handleSendPhoneOtp} className="space-y-3.5">
+                {/* Name Input */}
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-600 mb-1 uppercase tracking-wider">
+                    Full Name / आपका नाम
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-stone-400">
+                      <User className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Kavi Kumar"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
+                    />
+                  </div>
+                </div>
+
+                {/* Email Input */}
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-600 mb-1 uppercase tracking-wider">
+                    Gmail ID / ईमेल
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-stone-400">
+                      <Mail className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="email"
+                      required
+                      placeholder="name@gmail.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
+                    />
+                  </div>
+                </div>
+
+                {/* Phone Input */}
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-600 mb-1 uppercase tracking-wider">
+                    Mobile Number / मोबाइल नंबर
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-stone-500 font-bold text-xs">
+                      +91
+                    </span>
+                    <input
+                      type="tel"
+                      required
+                      maxLength={10}
+                      placeholder="9876543210"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+                      className="w-full pl-11 pr-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
+                    />
+                  </div>
+                </div>
+
+                {/* Complete Address Input */}
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-600 mb-1 uppercase tracking-wider">
+                    Complete Delivery Address / पूरा वितरण पता
+                  </label>
+                  <div className="relative">
+                    <span className="absolute top-2.5 left-3 text-stone-400">
+                      <MapPin className="w-3.5 h-3.5" />
+                    </span>
+                    <textarea
+                      required
+                      rows={2}
+                      placeholder="House No, Street, Landmark, City, State, ZIP"
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
+                    />
+                  </div>
+                </div>
+
+                {/* Submit Phone Auth Button */}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-500 text-white font-bold py-2.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 text-xs cursor-pointer mt-3"
+                >
+                  {loading ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <Phone className="w-3.5 h-3.5" />
+                      <span>Send Verification OTP</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            ) : (
+              /* OTP verification form */
+              <form onSubmit={handleVerifyPhoneOtp} className="space-y-4">
+                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl text-[11px] text-emerald-950 font-medium leading-relaxed flex items-start gap-2">
+                  <Smartphone className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5 animate-pulse" />
+                  <div>
+                    <span className="font-bold block text-emerald-900 mb-0.5">ओटीपी भेजा गया / OTP Sent!</span>
+                    A secure 6-digit verification code has been dispatched via SMS to <strong>+91 {phone}</strong>.
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-600 mb-1 text-center uppercase tracking-wider">
+                    Enter Verification Code
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={6}
+                    placeholder="X X X X X X"
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                    className="w-full tracking-[0.25em] text-center py-2 bg-stone-50 border border-stone-200 rounded-xl text-lg font-bold focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15 transition-all text-stone-900"
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOtpMode(false);
+                      setConfirmationResult(null);
+                      setError("");
+                    }}
+                    className="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold py-2 rounded-xl transition-all text-xs"
+                  >
+                    Go Back
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="flex-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-500 text-white font-bold py-2 rounded-xl transition-all shadow-md flex items-center justify-center gap-1 text-xs cursor-pointer"
+                  >
+                    {loading ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Verify & Login</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+          </>
+        )}
+
+        {/* TAB 2: EMAIL & PASSWORD METHOD */}
+        {authMethod === "email" && (
+          <form onSubmit={handleEmailAuthSubmit} className="space-y-3.5">
+            {/* Sub-selector tabs: SignIn vs SignUp */}
+            <div className="flex border-b border-stone-100 pb-1.5 justify-center gap-6 text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => {
+                  setEmailMode("signin");
+                  setError("");
+                }}
+                className={`pb-1 transition-all flex items-center gap-1 ${
+                  emailMode === "signin"
+                    ? "border-b-2 border-emerald-600 text-emerald-800"
+                    : "text-stone-400 hover:text-stone-600"
+                }`}
+              >
+                <LogIn className="w-3 h-3" />
+                <span>Existing User Login</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEmailMode("signup");
+                  setError("");
+                }}
+                className={`pb-1 transition-all flex items-center gap-1 ${
+                  emailMode === "signup"
+                    ? "border-b-2 border-emerald-600 text-emerald-800"
+                    : "text-stone-400 hover:text-stone-600"
+                }`}
+              >
+                <UserPlus className="w-3 h-3" />
+                <span>New Registration</span>
+              </button>
             </div>
 
-            {/* Email Input */}
+            {/* Email Address */}
             <div>
-              <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
-                Gmail ID / ईमेल
+              <label className="block text-[10px] font-bold text-stone-600 mb-1 uppercase tracking-wider">
+                Gmail Address / ईमेल आईडी
               </label>
               <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-stone-400">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-stone-400">
                   <Mail className="w-4 h-4" />
                 </span>
                 <input
@@ -226,144 +537,117 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
                   placeholder="name@gmail.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
+                  className="w-full pl-9 pr-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
                 />
               </div>
             </div>
 
-            {/* Mobile/Phone Input */}
+            {/* Password */}
             <div>
-              <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
-                Mobile Number / मोबाइल नंबर
+              <label className="block text-[10px] font-bold text-stone-600 mb-1 uppercase tracking-wider">
+                Password / पासवर्ड
               </label>
               <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-stone-400 font-bold text-xs">
-                  +91
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-stone-400">
+                  <Lock className="w-4 h-4" />
                 </span>
                 <input
-                  type="tel"
+                  type="password"
                   required
-                  maxLength={10}
-                  placeholder="e.g. 9876543210"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
-                  className="w-full pl-12 pr-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
+                  placeholder="Min. 6 characters"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
                 />
               </div>
             </div>
 
-            {/* Strictly Mandatory Address Input */}
-            <div>
-              <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
-                Complete Delivery Address / पूरा वितरण पता
-              </label>
-              <div className="relative">
-                <span className="absolute top-3 left-3 text-stone-400">
-                  <MapPin className="w-4 h-4" />
-                </span>
-                <textarea
-                  required
-                  rows={2}
-                  placeholder="Street, Landmark, City, State, ZIP code (strictly mandatory)"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
-                />
-              </div>
-              <p className="text-[10px] text-red-500 font-semibold mt-1">
-                * Required field for order fulfillment.
-              </p>
-            </div>
+            {/* Extra inputs only for NEW Registration / Sign Up */}
+            {emailMode === "signup" && (
+              <>
+                {/* Full Name */}
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-600 mb-1 uppercase tracking-wider">
+                    Full Name / आपका नाम
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-stone-400">
+                      <User className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      required={emailMode === "signup"}
+                      placeholder="e.g. Kavi Kumar"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
+                    />
+                  </div>
+                </div>
 
-            {/* Submit Button */}
+                {/* Mobile Number */}
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-600 mb-1 uppercase tracking-wider">
+                    Mobile Number / मोबाइल नंबर
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-stone-500 font-bold text-xs">
+                      +91
+                    </span>
+                    <input
+                      type="tel"
+                      required={emailMode === "signup"}
+                      maxLength={10}
+                      placeholder="9876543210"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+                      className="w-full pl-11 pr-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
+                    />
+                  </div>
+                </div>
+
+                {/* Delivery Address */}
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-600 mb-1 uppercase tracking-wider">
+                    Complete Delivery Address / पूरा विवरण पता
+                  </label>
+                  <div className="relative">
+                    <span className="absolute top-2.5 left-3 text-stone-400">
+                      <MapPin className="w-3.5 h-3.5" />
+                    </span>
+                    <textarea
+                      required={emailMode === "signup"}
+                      rows={2}
+                      placeholder="House No, Landmark, City, State, ZIP"
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-850 font-medium"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Email authentication submit button */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-500 text-white font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 text-sm cursor-pointer mt-4"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-500 text-white font-bold py-2.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 text-xs cursor-pointer mt-4"
             >
               {loading ? (
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  <LogIn className="w-4 h-4" />
-                  Send OTP & Proceed
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>{emailMode === "signin" ? "Login Securely" : "Register & Sign Up"}</span>
                 </>
               )}
             </button>
           </form>
-        ) : (
-          <form onSubmit={handleVerifyOtp} className="space-y-5">
-            {/* Real OTP Production Dispatch Alert */}
-            <div className="p-3.5 bg-amber-50/50 border border-amber-200 text-amber-900 rounded-xl text-xs">
-              <div className="font-bold flex items-center gap-1.5 mb-1 text-amber-950">
-                <Mail className="w-4 h-4 text-amber-600 animate-bounce" />
-                <span>सुरक्षित ओटीपी भेजा गया / OTP Dispatched!</span>
-              </div>
-              <p className="leading-relaxed font-medium">
-                We have dispatched a secure, one-time verification code (OTP) directly to your email address:
-              </p>
-              <div className="mt-2 text-[11px] text-stone-750 font-semibold bg-white/70 border border-amber-200/50 p-2 rounded-lg flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                <span>{email.trim().toLowerCase()}</span>
-              </div>
-              <p className="mt-2 text-[10px] text-stone-500 font-medium">
-                कृपया अपना स्पैम या इनबॉक्स फ़ोल्डर देखें। / Please check your inbox or spam folder.
-              </p>
-            </div>
-
-            {/* OTP Input */}
-            <div>
-              <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider text-center">
-                Enter 6-Digit OTP / ओटीपी दर्ज करें
-              </label>
-              <input
-                type="text"
-                required
-                maxLength={6}
-                placeholder="X X X X X X"
-                value={otpCode}
-                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
-                className="w-full tracking-widest text-center py-3 bg-stone-50 border border-stone-200 rounded-xl text-lg font-bold focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 transition-all text-stone-900"
-              />
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setOtpMode(false)}
-                className="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold py-2.5 rounded-xl transition-all text-xs"
-              >
-                Go Back
-              </button>
-
-              <button
-                type="button"
-                onClick={handleResendOtp}
-                disabled={loading}
-                className="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold py-2.5 rounded-xl transition-all text-xs flex items-center justify-center gap-1"
-              >
-                <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
-                <span>Resend OTP</span>
-              </button>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="flex-[2] bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-500 text-white font-bold py-2.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 text-xs cursor-pointer"
-              >
-                {loading ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <>
-                    <Check className="w-4 h-4" />
-                    Verify & Login
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
         )}
-        <div id="recaptcha-container"></div>
+
+        {/* Hidden Container for Firebase Recaptcha Verifier widget */}
+        <div id="recaptcha-container" className="mt-2"></div>
       </motion.div>
     </div>
   );
