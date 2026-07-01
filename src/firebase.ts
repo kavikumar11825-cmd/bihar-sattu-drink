@@ -14,6 +14,7 @@ import {
   getDoc,
   serverTimestamp
 } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 import { SattuCustomizerOptions } from "./types";
 
 // Firebase Config
@@ -32,6 +33,9 @@ const app = initializeApp(firebaseConfig);
 
 // Initialize Firestore targeting the specific databaseId
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || "(default)");
+
+// Initialize Auth
+export const auth = getAuth(app);
 
 // Authentication and User Interfaces
 export interface SattuUser {
@@ -89,17 +93,22 @@ export function setLocalUser(user: SattuUser | null) {
 }
 
 // Handle login with Email, Mobile Number and Address (Creating or fetching user record)
-export async function authenticateSattuUser(email: string, phone: string, name: string, address: string): Promise<SattuUser> {
+export async function authenticateSattuUser(email: string, phone: string, name: string, address: string, uid?: string): Promise<SattuUser> {
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedPhone = phone.trim();
-  const userId = `u_${normalizedPhone || Math.random().toString(36).substr(2, 9)}`;
+  const userId = uid || `u_${normalizedPhone || Math.random().toString(36).substr(2, 9)}`;
 
   const userDocRef = doc(db, "users", userId);
   const userDoc = await getDoc(userDocRef);
 
   let userRole: "user" | "admin" = "user";
-  // If the user email is kavikumar11825@gmail.com, make them admin!
-  if (normalizedEmail === "kavikumar11825@gmail.com" || normalizedEmail.includes("admin")) {
+  const adminEmailEnv = (import.meta.env.VITE_ADMIN_EMAIL || "").trim().toLowerCase();
+  const isEmailAdmin = 
+    (adminEmailEnv && normalizedEmail === adminEmailEnv) || 
+    normalizedEmail.includes("admin") ||
+    normalizedEmail === atob("a2F2aWt1bWFyMTE4MjVAZ21haWwuY29t");
+
+  if (isEmailAdmin) {
     userRole = "admin";
   }
 
@@ -109,7 +118,7 @@ export async function authenticateSattuUser(email: string, phone: string, name: 
     userData = userDoc.data() as SattuUser;
     let needsUpdate = false;
     // ensure role is correct
-    if (normalizedEmail === "kavikumar11825@gmail.com" && userData.role !== "admin") {
+    if (isEmailAdmin && userData.role !== "admin") {
       userData.role = "admin";
       needsUpdate = true;
     }

@@ -1,5 +1,6 @@
 import { useState, FormEvent } from "react";
-import { authenticateSattuUser, SattuUser } from "../firebase";
+import { authenticateSattuUser, SattuUser, auth } from "../firebase";
+import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth";
 import { X, Mail, Phone, User, Check, Key, Sparkles, LogIn, AlertCircle, MapPin, Smartphone, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { triggerSimulatedOtp } from "./OtpNotificationSimulator";
@@ -17,24 +18,81 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
   const [address, setAddress] = useState(""); // Strictly mandatory address
   const [otpMode, setOtpMode] = useState(false);
   const [otpCode, setOtpCode] = useState("");
-  const [activeOtp, setActiveOtp] = useState(""); // Dynamically generated OTP
+  const [activeOtp, setActiveOtp] = useState(""); // Dynamically generated OTP for backup / simulator
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
   const [otpChannel, setOtpChannel] = useState<"phone" | "email" | "both">("both");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
 
-  const generateAndSendOtp = (selectedChannel: "phone" | "email" | "both") => {
-    // Generate a secure, truly dynamic 6-digit OTP code
+  const generateAndSendOtp = async (selectedChannel: "phone" | "email" | "both") => {
+    // Generate a secure, truly dynamic 6-digit OTP code for backup / simulator
     const generated = Math.floor(100000 + Math.random() * 900000).toString();
     setActiveOtp(generated);
+    setConfirmationResult(null);
 
-    // Trigger high-fidelity on-screen simulation alerts
+    let firebasePhoneAuthSuccess = false;
+
+    // Firebase Phone Auth
     if (selectedChannel === "phone" || selectedChannel === "both") {
-      triggerSimulatedOtp("sms", phone, generated);
+      try {
+        // Find or create RecaptchaVerifier
+        let recaptchaVerifier = (window as any).recaptchaVerifier;
+        if (!recaptchaVerifier) {
+          recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", {
+            size: "invisible",
+            callback: () => {
+              console.log("reCAPTCHA solved, proceeding with OTP");
+            }
+          });
+          (window as any).recaptchaVerifier = recaptchaVerifier;
+        }
+
+        let formattedPhone = phone.trim();
+        if (!formattedPhone.startsWith("+")) {
+          // Default to India country code +91
+          formattedPhone = "+91" + formattedPhone;
+        }
+
+        console.log("Initiating Firebase Phone Auth for:", formattedPhone);
+        const result = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifier);
+        setConfirmationResult(result);
+        firebasePhoneAuthSuccess = true;
+
+        // Visual feedback
+        triggerSimulatedOtp("sms", phone, "Sent via Firebase!");
+      } catch (err: any) {
+        console.error("Firebase Phone Auth failed:", err);
+        setError(`Firebase Phone Auth Info: ${err.message || "Failed to contact Firebase services."} (Using sandbox mode)`);
+        // Fallback to custom sandbox simulation
+        triggerSimulatedOtp("sms", phone, generated);
+      }
     }
+
+    // Email OTP Dispatch
     if (selectedChannel === "email" || selectedChannel === "both") {
       triggerSimulatedOtp("email", email.trim().toLowerCase(), generated);
+    }
+
+    // Call server-side backup dispatch proxy route (for Email or when Firebase Auth fails/sandbox is used)
+    try {
+      if ((selectedChannel === "phone" || selectedChannel === "both") && !firebasePhoneAuthSuccess) {
+        await fetch("/api/send-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "sms", target: phone, code: generated })
+        });
+      }
+      if (selectedChannel === "email" || selectedChannel === "both") {
+        await fetch("/api/send-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "email", target: email.trim().toLowerCase(), code: generated })
+        });
+      }
+    } catch (e) {
+      console.warn("Real OTP dispatch warning (falling back to sandbox simulator):", e);
     }
   };
 
@@ -62,24 +120,43 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
     setLoading(true);
     // Simulate minor network dispatch delay
     setTimeout(() => {
-      setLoading(false);
-      generateAndSendOtp(otpChannel);
-      setOtpMode(true);
+      generateAndSendOtp(otpChannel).finally(() => {
+        setLoading(false);
+        setOtpMode(true);
+      });
     }, 700);
   };
 
   const handleVerifyOtp = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
-
-    if (otpCode !== activeOtp) {
-      setError("गलत ओटीपी! कृपया सही ओटीपी दर्ज करें जो आपको प्राप्त हुआ है। / Incorrect OTP. Please enter the dynamic code displayed in the alert notification.");
-      return;
-    }
-
     setLoading(true);
+
     try {
-      const user = await authenticateSattuUser(email, phone, name, address);
+      let uid: string | undefined = undefined;
+
+      if (confirmationResult) {
+        try {
+          console.log("Verifying real OTP with Firebase Phone Auth:", otpCode);
+          const userCredential = await confirmationResult.confirm(otpCode);
+          uid = userCredential.user.uid;
+          console.log("Firebase Phone Auth verified successfully! uid:", uid);
+        } catch (err: any) {
+          console.error("Firebase Auth OTP verification failed:", err);
+          setError("अवैध ओटीपी कोड! / Invalid Firebase OTP code. Please check the code sent to your mobile or try again.");
+          setLoading(false);
+          return;
+        }
+      } else {
+        // Fallback or Email verification
+        if (otpCode !== activeOtp) {
+          setError("गलत ओटीपी! कृपया सही ओटीपी दर्ज करें जो आपको प्राप्त हुआ है। / Incorrect OTP. Please enter the dynamic code displayed in the alert notification.");
+          setLoading(false);
+          return;
+        }
+      }
+
+      const user = await authenticateSattuUser(email, phone, name, address, uid);
       onLoginSuccess(user);
       onClose();
       // Reset form
@@ -89,6 +166,7 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
       setAddress("");
       setOtpMode(false);
       setOtpCode("");
+      setConfirmationResult(null);
     } catch (err: any) {
       setError("सत्यापन विफल रहा। कृपया पुनः प्रयास करें। / Verification failed. Please retry.");
     } finally {
@@ -100,9 +178,10 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
     setError("");
     setLoading(true);
     setTimeout(() => {
-      setLoading(false);
-      generateAndSendOtp(otpChannel);
-      setOtpCode("");
+      generateAndSendOtp(otpChannel).finally(() => {
+        setLoading(false);
+        setOtpCode("");
+      });
     }, 600);
   };
 
@@ -376,6 +455,7 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
             </div>
           </form>
         )}
+        <div id="recaptcha-container"></div>
       </motion.div>
     </div>
   );
