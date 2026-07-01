@@ -1,7 +1,8 @@
 import { useState, FormEvent } from "react";
 import { authenticateSattuUser, SattuUser } from "../firebase";
-import { X, Mail, Phone, User, Check, Key, Sparkles, LogIn, AlertCircle, MapPin } from "lucide-react";
+import { X, Mail, Phone, User, Check, Key, Sparkles, LogIn, AlertCircle, MapPin, Smartphone, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { triggerSimulatedOtp } from "./OtpNotificationSimulator";
 
 interface SattuAuthModalProps {
   isOpen: boolean;
@@ -16,11 +17,26 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
   const [address, setAddress] = useState(""); // Strictly mandatory address
   const [otpMode, setOtpMode] = useState(false);
   const [otpCode, setOtpCode] = useState("");
-  const [generatedOtp] = useState("458129"); // Static secure mock OTP for simple interactive validation
+  const [activeOtp, setActiveOtp] = useState(""); // Dynamically generated OTP
+  const [otpChannel, setOtpChannel] = useState<"phone" | "email" | "both">("both");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
+
+  const generateAndSendOtp = (selectedChannel: "phone" | "email" | "both") => {
+    // Generate a secure, truly dynamic 6-digit OTP code
+    const generated = Math.floor(100000 + Math.random() * 900000).toString();
+    setActiveOtp(generated);
+
+    // Trigger high-fidelity on-screen simulation alerts
+    if (selectedChannel === "phone" || selectedChannel === "both") {
+      triggerSimulatedOtp("sms", phone, generated);
+    }
+    if (selectedChannel === "email" || selectedChannel === "both") {
+      triggerSimulatedOtp("email", email.trim().toLowerCase(), generated);
+    }
+  };
 
   const handleSendOtp = (e: FormEvent) => {
     e.preventDefault();
@@ -44,19 +60,20 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
     }
 
     setLoading(true);
-    // Simulate short network delay
+    // Simulate minor network dispatch delay
     setTimeout(() => {
       setLoading(false);
+      generateAndSendOtp(otpChannel);
       setOtpMode(true);
-    }, 800);
+    }, 700);
   };
 
   const handleVerifyOtp = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
 
-    if (otpCode !== generatedOtp) {
-      setError("गलत ओटीपी! कृपया '458129' दर्ज करें। / Incorrect OTP. Please enter '458129' for simulation.");
+    if (otpCode !== activeOtp) {
+      setError("गलत ओटीपी! कृपया सही ओटीपी दर्ज करें जो आपको प्राप्त हुआ है। / Incorrect OTP. Please enter the dynamic code displayed in the alert notification.");
       return;
     }
 
@@ -77,6 +94,16 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleResendOtp = () => {
+    setError("");
+    setLoading(true);
+    setTimeout(() => {
+      setLoading(false);
+      generateAndSendOtp(otpChannel);
+      setOtpCode("");
+    }, 600);
   };
 
   return (
@@ -103,12 +130,12 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
             <Sparkles className="w-6 h-6" />
           </div>
           <h3 className="text-xl font-bold text-stone-900 tracking-tight">
-            {!otpMode ? "Sattu Drink - Sign In" : "Verify Mobile Number"}
+            {!otpMode ? "Customer Sign-In" : "Verify OTP Code"}
           </h3>
           <p className="text-stone-500 text-xs mt-1">
             {!otpMode 
-              ? "Join us to order, track, and customized your healthy drink!" 
-              : "ओटीपी सत्यापन (OTP Verification) / Desi Security Check"}
+              ? "Join us to order, track, and customize your healthy drink!" 
+              : "ओटीपी सत्यापन (OTP Verification) • Secure Customer Access"}
           </p>
         </div>
 
@@ -205,6 +232,51 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
               </p>
             </div>
 
+            {/* OTP Delivery Choice Segment */}
+            <div>
+              <label className="block text-[10px] font-bold text-stone-500 mb-1.5 uppercase tracking-wider">
+                Request OTP On / ओटीपी प्राप्त करने का माध्यम:
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOtpChannel("both")}
+                  className={`py-1.5 rounded-lg border text-[10px] font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
+                    otpChannel === "both" 
+                      ? "bg-emerald-50 border-emerald-500 text-emerald-800" 
+                      : "bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100"
+                  }`}
+                >
+                  <span>⚡ Both</span>
+                  <span className="text-[8px] opacity-75 font-normal">SMS & Email</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOtpChannel("phone")}
+                  className={`py-1.5 rounded-lg border text-[10px] font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
+                    otpChannel === "phone" 
+                      ? "bg-emerald-50 border-emerald-500 text-emerald-800" 
+                      : "bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100"
+                  }`}
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Mobile SMS</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOtpChannel("email")}
+                  className={`py-1.5 rounded-lg border text-[10px] font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
+                    otpChannel === "email" 
+                      ? "bg-emerald-50 border-emerald-500 text-emerald-800" 
+                      : "bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100"
+                  }`}
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Gmail ID</span>
+                </button>
+              </div>
+            </div>
+
             {/* Submit Button */}
             <button
               type="submit"
@@ -216,7 +288,7 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
               ) : (
                 <>
                   <LogIn className="w-4 h-4" />
-                  Proceed with Verification
+                  Send OTP & Proceed
                 </>
               )}
             </button>
@@ -224,16 +296,31 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
         ) : (
           <form onSubmit={handleVerifyOtp} className="space-y-5">
             {/* OTP Simulator Alert */}
-            <div className="p-3.5 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs">
-              <div className="font-bold flex items-center gap-1.5 mb-1 text-amber-950">
-                <Key className="w-4 h-4 text-amber-600" />
-                <span>Simulated Secure OTP Send!</span>
+            <div className="p-3.5 bg-emerald-50/50 border border-emerald-200 text-emerald-900 rounded-xl text-xs">
+              <div className="font-bold flex items-center gap-1.5 mb-1 text-emerald-950">
+                <Key className="w-4 h-4 text-emerald-600" />
+                <span>Simulated OTP Dispatched!</span>
               </div>
               <p className="leading-relaxed font-medium">
-                To simulate real SMS authentication inside the AI Studio preview sandbox, we have sent a 6-digit code to <span className="font-semibold text-stone-950">+91 {phone}</span>.
+                To test the verification, we dispatched a 6-digit code:
               </p>
-              <p className="mt-2 text-emerald-800 font-bold">
-                Please enter code: <span className="underline select-all text-sm tracking-wider font-mono">{generatedOtp}</span>
+              <div className="mt-2 space-y-1 text-[11px] text-stone-700">
+                {(otpChannel === "phone" || otpChannel === "both") && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-emerald-600">✔</span>
+                    <span>SMS sent to +91 {phone.substring(0, 3)}****{phone.substring(7)}</span>
+                  </div>
+                )}
+                {(otpChannel === "email" || otpChannel === "both") && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-emerald-600">✔</span>
+                    <span>Email sent to {email.substring(0, 4)}***{email.substring(email.indexOf("@"))}</span>
+                  </div>
+                )}
+              </div>
+              <p className="mt-3 text-emerald-900 bg-emerald-100/50 px-2.5 py-1.5 rounded-lg font-bold border border-emerald-200 flex items-center justify-between">
+                <span>Verification OTP Code:</span>
+                <span className="underline select-all text-sm tracking-wider font-mono text-emerald-950">{activeOtp}</span>
               </p>
             </div>
 
@@ -253,7 +340,7 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
               />
             </div>
 
-            <div className="flex gap-3">
+            <div className="flex gap-2">
               <button
                 type="button"
                 onClick={() => setOtpMode(false)}
@@ -263,9 +350,19 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
               </button>
 
               <button
+                type="button"
+                onClick={handleResendOtp}
+                disabled={loading}
+                className="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold py-2.5 rounded-xl transition-all text-xs flex items-center justify-center gap-1"
+              >
+                <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+                <span>Resend OTP</span>
+              </button>
+
+              <button
                 type="submit"
                 disabled={loading}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-500 text-white font-bold py-2.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 text-xs cursor-pointer"
+                className="flex-[2] bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-500 text-white font-bold py-2.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 text-xs cursor-pointer"
               >
                 {loading ? (
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
