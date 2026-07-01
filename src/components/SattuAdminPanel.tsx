@@ -25,7 +25,8 @@ import {
   ShieldCheck,
   LogOut,
   RefreshCw,
-  Sparkles
+  Sparkles,
+  AlertCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -53,6 +54,7 @@ export default function SattuAdminPanel({ isOpen, onClose }: SattuAdminPanelProp
   const [generatedAdminOtp, setGeneratedAdminOtp] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [usingSandboxFallback, setUsingSandboxFallback] = useState(false);
 
   useEffect(() => {
     if (!isOpen || !isAdminAuthenticated) return;
@@ -111,14 +113,20 @@ export default function SattuAdminPanel({ isOpen, onClose }: SattuAdminPanelProp
         body: JSON.stringify({ type: "email", target: emailTrimmed, code: otp })
       });
 
+      const contentType = response.headers.get("content-type");
+      if (!response.ok || !contentType || !contentType.includes("application/json")) {
+        throw new Error("SMTP server not configured or API route unavailable on static hosting.");
+      }
+
       const data = await response.json();
-      if (!response.ok) {
+      if (!data.success) {
         throw new Error(data.error || "Failed to dispatch admin OTP.");
       }
+      setUsingSandboxFallback(false);
       setAdminOtpSent(true);
     } catch (err: any) {
       console.warn("Admin real OTP send failed, using on-screen sandbox code:", err);
-      setAuthError(`${err.message || "Failed to send verification OTP."} (Development Sandbox active: Please use the code '${otp}' to verify)`);
+      setUsingSandboxFallback(true);
       setAdminOtpSent(true);
     } finally {
       setAuthLoading(false);
@@ -153,6 +161,7 @@ export default function SattuAdminPanel({ isOpen, onClose }: SattuAdminPanelProp
     setAdminOtpCode("");
     setAdminOtpSent(false);
     setGeneratedAdminOtp("");
+    setUsingSandboxFallback(false);
   };
 
   // Resend Admin OTP
@@ -171,13 +180,19 @@ export default function SattuAdminPanel({ isOpen, onClose }: SattuAdminPanelProp
         body: JSON.stringify({ type: "email", target: emailTrimmed, code: otp })
       });
 
+      const contentType = response.headers.get("content-type");
+      if (!response.ok || !contentType || !contentType.includes("application/json")) {
+        throw new Error("SMTP server not configured or API route unavailable on static hosting.");
+      }
+
       const data = await response.json();
-      if (!response.ok) {
+      if (!data.success) {
         throw new Error(data.error || "Failed to dispatch admin OTP.");
       }
+      setUsingSandboxFallback(false);
     } catch (err: any) {
       console.warn("Admin resend OTP failed, using on-screen sandbox code:", err);
-      setAuthError(`${err.message || "Failed to resend verification OTP."} (Development Resend Sandbox active: Please use the code '${otp}' to verify)`);
+      setUsingSandboxFallback(true);
     } finally {
       setAuthLoading(false);
     }
@@ -361,18 +376,34 @@ export default function SattuAdminPanel({ isOpen, onClose }: SattuAdminPanelProp
               ) : (
                 /* Step 2: Gmail OTP Verification */
                 <form onSubmit={handleAdminVerifyAndLogin} className="space-y-4">
-                  <div className="p-3.5 bg-red-50 border border-red-200 text-red-900 rounded-xl text-xs">
-                    <div className="font-bold flex items-center gap-1.5 mb-1 text-red-950">
-                      <Mail className="w-4 h-4 text-red-600 animate-pulse" />
-                      <span>Admin Verification OTP Sent!</span>
+                  {usingSandboxFallback ? (
+                    <div className="p-3.5 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl text-[11px] leading-relaxed">
+                      <div className="font-bold flex items-center gap-1.5 mb-1 text-amber-950">
+                        <AlertCircle className="w-4.5 h-4.5 text-amber-600 animate-pulse" />
+                        <span>Sandbox Mode Active / सैंडबॉक्स मोड सक्रिय</span>
+                      </div>
+                      <p className="mb-2">
+                        No active SMTP mail server found, or you are running on a static host like Netlify. We've automatically activated secure Sandbox mode.
+                      </p>
+                      <div className="bg-amber-100 border border-amber-200 p-2.5 rounded-xl flex items-center justify-between font-bold text-amber-950 text-xs">
+                        <span>Verification Code:</span>
+                        <span className="font-mono text-sm tracking-widest bg-amber-200/60 px-2 py-0.5 rounded select-all">{generatedAdminOtp}</span>
+                      </div>
                     </div>
-                    <p className="leading-relaxed">
-                      We have sent a secure authentication OTP directly to your Gmail inbox: <span className="font-bold text-stone-950">{adminEmail}</span>.
-                    </p>
-                    <p className="mt-2 text-[10px] text-stone-500 font-medium">
-                      Please check your inbox or spam folder. Do not close this panel.
-                    </p>
-                  </div>
+                  ) : (
+                    <div className="p-3.5 bg-red-50 border border-red-200 text-red-900 rounded-xl text-xs">
+                      <div className="font-bold flex items-center gap-1.5 mb-1 text-red-950">
+                        <Mail className="w-4 h-4 text-red-600 animate-pulse" />
+                        <span>Admin Verification OTP Sent!</span>
+                      </div>
+                      <p className="leading-relaxed">
+                        We have sent a secure authentication OTP directly to your Gmail inbox: <span className="font-bold text-stone-950">{adminEmail}</span>.
+                      </p>
+                      <p className="mt-2 text-[10px] text-stone-500 font-medium">
+                        Please check your inbox or spam folder. Do not close this panel.
+                      </p>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-xs font-bold text-stone-600 mb-1.5 uppercase tracking-wider text-center">
