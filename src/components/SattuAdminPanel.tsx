@@ -28,7 +28,6 @@ import {
   Sparkles
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { triggerSimulatedOtp } from "./OtpNotificationSimulator";
 
 interface SattuAdminPanelProps {
   isOpen: boolean;
@@ -104,21 +103,24 @@ export default function SattuAdminPanel({ isOpen, onClose }: SattuAdminPanelProp
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     setGeneratedAdminOtp(otp);
 
-    // Trigger Simulated Gmail Inbox notification instantly for the interactive sandbox
-    triggerSimulatedOtp("email", emailTrimmed, otp);
-
-    // Call server-side real dispatch proxy route
+    // Call server-side real dispatch proxy route to deliver to admin's real inbox
     try {
-      await fetch("/api/send-otp", {
+      const response = await fetch("/api/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "email", target: emailTrimmed, code: otp })
       });
-    } catch (err) {
-      console.warn("Admin real OTP send failed (falling back to sandbox simulator):", err);
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to dispatch admin OTP.");
+      }
+      setAdminOtpSent(true);
+    } catch (err: any) {
+      console.error("Admin real OTP send failed:", err);
+      setAuthError(err.message || "प्रशासनिक ओटीपी भेजने में विफलता! / Failed to send admin verification OTP. Ensure your SMTP settings are configured.");
     } finally {
       setAuthLoading(false);
-      setAdminOtpSent(true);
     }
   };
 
@@ -153,15 +155,31 @@ export default function SattuAdminPanel({ isOpen, onClose }: SattuAdminPanelProp
   };
 
   // Resend Admin OTP
-  const handleResendAdminOtp = () => {
+  const handleResendAdminOtp = async () => {
     setAuthError("");
     setAuthLoading(true);
-    setTimeout(() => {
+
+    const emailTrimmed = adminEmail.trim().toLowerCase();
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedAdminOtp(otp);
+
+    try {
+      const response = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "email", target: emailTrimmed, code: otp })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to dispatch admin OTP.");
+      }
+    } catch (err: any) {
+      console.error("Admin resend OTP failed:", err);
+      setAuthError(err.message || "प्रशासनिक ओटीपी भेजने में विफलता! / Failed to send admin verification OTP. Ensure your SMTP settings are configured.");
+    } finally {
       setAuthLoading(false);
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      setGeneratedAdminOtp(otp);
-      triggerSimulatedOtp("email", adminEmail.trim().toLowerCase(), otp);
-    }, 500);
+    }
   };
 
   // Handle order status updates
@@ -344,15 +362,14 @@ export default function SattuAdminPanel({ isOpen, onClose }: SattuAdminPanelProp
                 <form onSubmit={handleAdminVerifyAndLogin} className="space-y-4">
                   <div className="p-3.5 bg-red-50 border border-red-200 text-red-900 rounded-xl text-xs">
                     <div className="font-bold flex items-center gap-1.5 mb-1 text-red-950">
-                      <Key className="w-4 h-4 text-red-600" />
+                      <Mail className="w-4 h-4 text-red-600 animate-pulse" />
                       <span>Admin Verification OTP Sent!</span>
                     </div>
                     <p className="leading-relaxed">
-                      We have sent a secure authentication OTP to Gmail ID: <span className="font-bold text-stone-950">{adminEmail}</span>.
+                      We have sent a secure authentication OTP directly to your Gmail inbox: <span className="font-bold text-stone-950">{adminEmail}</span>.
                     </p>
-                    <p className="mt-2.5 text-red-950 bg-red-100/60 px-2.5 py-1.5 rounded-lg font-bold border border-red-200 flex items-center justify-between">
-                      <span>Gmail OTP Code:</span>
-                      <span className="underline select-all text-sm tracking-wider font-mono text-red-950">{generatedAdminOtp}</span>
+                    <p className="mt-2 text-[10px] text-stone-500 font-medium">
+                      Please check your inbox or spam folder. Do not close this panel.
                     </p>
                   </div>
 

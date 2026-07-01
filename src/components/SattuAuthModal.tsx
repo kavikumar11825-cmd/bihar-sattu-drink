@@ -18,81 +18,36 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
   const [address, setAddress] = useState(""); // Strictly mandatory address
   const [otpMode, setOtpMode] = useState(false);
   const [otpCode, setOtpCode] = useState("");
-  const [activeOtp, setActiveOtp] = useState(""); // Dynamically generated OTP for backup / simulator
+  const [activeOtp, setActiveOtp] = useState(""); // Dynamically generated OTP for verification
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
-  const [otpChannel, setOtpChannel] = useState<"phone" | "email" | "both">("both");
+  const [otpChannel] = useState<"email">("email");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
 
-  const generateAndSendOtp = async (selectedChannel: "phone" | "email" | "both") => {
-    // Generate a secure, truly dynamic 6-digit OTP code for backup / simulator
+  const generateAndSendOtp = async () => {
+    // Generate a secure, truly dynamic 6-digit OTP code
     const generated = Math.floor(100000 + Math.random() * 900000).toString();
     setActiveOtp(generated);
     setConfirmationResult(null);
 
-    let firebasePhoneAuthSuccess = false;
-
-    // Firebase Phone Auth
-    if (selectedChannel === "phone" || selectedChannel === "both") {
-      try {
-        // Find or create RecaptchaVerifier
-        let recaptchaVerifier = (window as any).recaptchaVerifier;
-        if (!recaptchaVerifier) {
-          recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", {
-            size: "invisible",
-            callback: () => {
-              console.log("reCAPTCHA solved, proceeding with OTP");
-            }
-          });
-          (window as any).recaptchaVerifier = recaptchaVerifier;
-        }
-
-        let formattedPhone = phone.trim();
-        if (!formattedPhone.startsWith("+")) {
-          // Default to India country code +91
-          formattedPhone = "+91" + formattedPhone;
-        }
-
-        console.log("Initiating Firebase Phone Auth for:", formattedPhone);
-        const result = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifier);
-        setConfirmationResult(result);
-        firebasePhoneAuthSuccess = true;
-
-        // Visual feedback
-        triggerSimulatedOtp("sms", phone, "Sent via Firebase!");
-      } catch (err: any) {
-        console.error("Firebase Phone Auth failed:", err);
-        setError(`Firebase Phone Auth Info: ${err.message || "Failed to contact Firebase services."} (Using sandbox mode)`);
-        // Fallback to custom sandbox simulation
-        triggerSimulatedOtp("sms", phone, generated);
-      }
-    }
-
-    // Email OTP Dispatch
-    if (selectedChannel === "email" || selectedChannel === "both") {
-      triggerSimulatedOtp("email", email.trim().toLowerCase(), generated);
-    }
-
-    // Call server-side backup dispatch proxy route (for Email or when Firebase Auth fails/sandbox is used)
+    // Call server-side real dispatch proxy route to send strictly to user's provided email inbox
     try {
-      if ((selectedChannel === "phone" || selectedChannel === "both") && !firebasePhoneAuthSuccess) {
-        await fetch("/api/send-otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "sms", target: phone, code: generated })
-        });
+      const response = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "email", target: email.trim().toLowerCase(), code: generated })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to send OTP.");
       }
-      if (selectedChannel === "email" || selectedChannel === "both") {
-        await fetch("/api/send-otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "email", target: email.trim().toLowerCase(), code: generated })
-        });
-      }
-    } catch (e) {
-      console.warn("Real OTP dispatch warning (falling back to sandbox simulator):", e);
+    } catch (e: any) {
+      console.error("Real OTP dispatch failed:", e);
+      setError(e.message || "ईमेल भेजने में त्रुटि! / Error sending OTP email. Ensure your SMTP configuration in settings is correct.");
+      throw e;
     }
   };
 
@@ -118,12 +73,17 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
     }
 
     setLoading(true);
-    // Simulate minor network dispatch delay
     setTimeout(() => {
-      generateAndSendOtp(otpChannel).finally(() => {
-        setLoading(false);
-        setOtpMode(true);
-      });
+      generateAndSendOtp()
+        .then(() => {
+          setOtpMode(true);
+        })
+        .catch(() => {
+          // Keep on the same screen so they can read the error message
+        })
+        .finally(() => {
+          setLoading(false);
+        });
     }, 700);
   };
 
@@ -178,10 +138,14 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
     setError("");
     setLoading(true);
     setTimeout(() => {
-      generateAndSendOtp(otpChannel).finally(() => {
-        setLoading(false);
-        setOtpCode("");
-      });
+      generateAndSendOtp()
+        .then(() => {
+          setOtpCode("");
+        })
+        .catch(() => {})
+        .finally(() => {
+          setLoading(false);
+        });
     }, 600);
   };
 
@@ -311,56 +275,11 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
               </p>
             </div>
 
-            {/* OTP Delivery Choice Segment */}
-            <div>
-              <label className="block text-[10px] font-bold text-stone-500 mb-1.5 uppercase tracking-wider">
-                Request OTP On / ओटीपी प्राप्त करने का माध्यम:
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setOtpChannel("both")}
-                  className={`py-1.5 rounded-lg border text-[10px] font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
-                    otpChannel === "both" 
-                      ? "bg-emerald-50 border-emerald-500 text-emerald-800" 
-                      : "bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100"
-                  }`}
-                >
-                  <span>⚡ Both</span>
-                  <span className="text-[8px] opacity-75 font-normal">SMS & Email</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOtpChannel("phone")}
-                  className={`py-1.5 rounded-lg border text-[10px] font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
-                    otpChannel === "phone" 
-                      ? "bg-emerald-50 border-emerald-500 text-emerald-800" 
-                      : "bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100"
-                  }`}
-                >
-                  <Smartphone className="w-3.5 h-3.5" />
-                  <span>Mobile SMS</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOtpChannel("email")}
-                  className={`py-1.5 rounded-lg border text-[10px] font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
-                    otpChannel === "email" 
-                      ? "bg-emerald-50 border-emerald-500 text-emerald-800" 
-                      : "bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100"
-                  }`}
-                >
-                  <Mail className="w-3.5 h-3.5" />
-                  <span>Gmail ID</span>
-                </button>
-              </div>
-            </div>
-
             {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-500 text-white font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 text-sm cursor-pointer mt-2"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-500 text-white font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 text-sm cursor-pointer mt-4"
             >
               {loading ? (
                 <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -374,32 +293,21 @@ export default function SattuAuthModal({ isOpen, onClose, onLoginSuccess }: Satt
           </form>
         ) : (
           <form onSubmit={handleVerifyOtp} className="space-y-5">
-            {/* OTP Simulator Alert */}
-            <div className="p-3.5 bg-emerald-50/50 border border-emerald-200 text-emerald-900 rounded-xl text-xs">
-              <div className="font-bold flex items-center gap-1.5 mb-1 text-emerald-950">
-                <Key className="w-4 h-4 text-emerald-600" />
-                <span>Simulated OTP Dispatched!</span>
+            {/* Real OTP Production Dispatch Alert */}
+            <div className="p-3.5 bg-amber-50/50 border border-amber-200 text-amber-900 rounded-xl text-xs">
+              <div className="font-bold flex items-center gap-1.5 mb-1 text-amber-950">
+                <Mail className="w-4 h-4 text-amber-600 animate-bounce" />
+                <span>सुरक्षित ओटीपी भेजा गया / OTP Dispatched!</span>
               </div>
               <p className="leading-relaxed font-medium">
-                To test the verification, we dispatched a 6-digit code:
+                We have dispatched a secure, one-time verification code (OTP) directly to your email address:
               </p>
-              <div className="mt-2 space-y-1 text-[11px] text-stone-700">
-                {(otpChannel === "phone" || otpChannel === "both") && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-emerald-600">✔</span>
-                    <span>SMS sent to +91 {phone.substring(0, 3)}****{phone.substring(7)}</span>
-                  </div>
-                )}
-                {(otpChannel === "email" || otpChannel === "both") && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-emerald-600">✔</span>
-                    <span>Email sent to {email.substring(0, 4)}***{email.substring(email.indexOf("@"))}</span>
-                  </div>
-                )}
+              <div className="mt-2 text-[11px] text-stone-750 font-semibold bg-white/70 border border-amber-200/50 p-2 rounded-lg flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                <span>{email.trim().toLowerCase()}</span>
               </div>
-              <p className="mt-3 text-emerald-900 bg-emerald-100/50 px-2.5 py-1.5 rounded-lg font-bold border border-emerald-200 flex items-center justify-between">
-                <span>Verification OTP Code:</span>
-                <span className="underline select-all text-sm tracking-wider font-mono text-emerald-950">{activeOtp}</span>
+              <p className="mt-2 text-[10px] text-stone-500 font-medium">
+                कृपया अपना स्पैम या इनबॉक्स फ़ोल्डर देखें। / Please check your inbox or spam folder.
               </p>
             </div>
 

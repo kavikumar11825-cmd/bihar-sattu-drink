@@ -13,7 +13,6 @@ import SattuAuthModal from "./components/SattuAuthModal";
 import SattuCheckoutModal from "./components/SattuCheckoutModal";
 import SattuOrdersDashboard from "./components/SattuOrdersDashboard";
 import SattuAdminPanel from "./components/SattuAdminPanel";
-import OtpNotificationSimulator from "./components/OtpNotificationSimulator";
 import { getLocalUser, setLocalUser, SattuUser } from "./firebase";
 
 import { 
@@ -560,9 +559,6 @@ export default function App() {
         isOpen={adminOpen} 
         onClose={() => setAdminOpen(false)} 
       />
-
-      {/* Global OTP SMS/Email Push Notification Banner Simulator */}
-      <OtpNotificationSimulator />
 
     </div>
   );
